@@ -1,0 +1,316 @@
+# Thanks to Database Guy: https://www.youtube.com/playlist?list=PLQw5NrLjJKwPLkNtiDk_oXc9znwtnB7lB
+# Cau truc thu muc: $ORACLE_HOME=/u01/app/oracle/product/19.0.0/dbhome_1
+# $ORACLE_BASE=/u01/app/oracle
+# DATA, FILE in /u02/oradata/orapri
+# DB_NAME
+# DB_UNIQUE_NAME = SERVICE_NAMES (but Service_name in TNSName allow register an Instance with a Listener)
+# INSTANCE_NAME = $ORACLE_SID -- unique Instance in the server -> name of instance
+# Tom lai, DB the hien voi User nhu 1 SERVICE, TNSora (alias) & SQLnet (bien dich) Client - Listener Server (Port)
+# select status from v$instance -- Check Startup mode
+# ls -shl -- check size in Megabyte
+
+# CHUONG 1
+################ 1. Steps
+
+
+
+################ 2. Create Primary
+--- ON THE PRIMARY
+1. Create Primary
+- Chay dbca -silent -createDatabase -responseFile dbca4.rsp
+- Tao thu muc:
+	+ mkdir /u02/oradata/ora/fra/
+	+ mkdir /u02/oradata/ora/arch1/
+- Tao Listener, chinh sua: 
+		SID_LIST_TAINGHE =
+		  (SID_LIST =
+			(SID_DESC = (GLOBAL_DBNAME = orapri) (ORACLE_HOME = /u01/app/oracle/product/19.0.0/dbhome_1) (SID_NAME = orapri))
+		  )
+- Set wrap off
+- Kiem tra cau hinh DB
+	+ SELECT NAME, DB_UNIQUE_NAME, OPEN_MODE, LOG_MODE, FLASHBACK_ON, FORCE_LOGGING FROM V$DATABASE;
+	+ SHOW PARAMETER <ten_tham_so>; (VD: NAME, DB_RECOVERY_FILE_DEST)
+- ALTER SYSTEM SET DB_UNIQUE_NAME='orap' SCOPE=SPFILE; -- Doi ten Instance
+- ALTER SYSTEM RESET DB_RECOVERY_FILE_DEST SCOPE=SPFILE; -- Reset Path Fast Recovery Area
+- ALTER SYSTEM SET LOG_ARCHIVE_DEST_1='LOCATION=/u02/oradata/orapri/arch1/ VALID_FOR=(ALL_LOGFILES,ALL_ROLES) DB_UNIQUE_NAME=orap' scope=spfile;
+
+2. Set Primary in ARCHIVELOG mode
+- SHUTDOWN IMMEDIATE;
+	STARTUP MOUNT;
+	SHOW PARAMETER NAME;
+- ALTER DATABASE ARCHIVELOG;
+	ALTER DATABASE OPEN;
+	ARCHIVE LOG LIST; -- Oldest Online Log Sequence: Redo Log duoc Archived lan truoc (cu nhat); Next Log: Redo Log tiep theo duoc ghi; Current Log: Redo Log hien tai dang duoc dung
+
+3. Enable FORCE LOGGING
+- ALTER DATABASE FORCE LOGGING; -- Tat ca thong tin thay doi duoc ghi vao Redo Log
+- ALTER SYSTEM SET LOCAL_LISTENER='db1:1521';
+- ALTER SYSTEM SET LOG_ARCHIVE_MAX_PROCESSES=30; -- So tien trinh ARCn toi da
+- ALTER SYSTEM SET LOG_ARCHIVE_FORMAT='ora_%t_%s_%r.arc' SCOPE=SPFILE; -- Dinh dang ten %t: thread, %s: sequence number, %r: resetlog ID <AdminWorkshop 13-12>
+- ALTER SYSTEM SET DB_RECOVERY_FILE_DEST_SIZE = 5G SCOPE=BOTH; -- Dung luong cho FAST RECOVERY AREA
+- ALTER SYSTEM SET DB_RECOVERY_FILE_DEST = '/u02/oradata/orapri/fra/'  SCOPE=BOTH; -- Chinh lai Path cho Fast Recovery Area
+
+4. Enable FLASHBACK ON
+- ALTER SYSTEM SET DB_FLASHBACK_RETENTION_TARGET = 60 SCOPE=BOTH; -- Dat thoi gian chien luoc cho Flashback la 60 minutes
+- ALTER DATABASE FLASHBACK ON; -- bat Flashback (yeu cau phai co ARCHIVE)
+- ALTER SYSTEM SET REMOTE_LOGIN_PASSWORDFILE=EXCLUSIVE SCOPE=SPFILE; -- Exclusive - Password file duoc dung boi 1 DB, SYS va non-SYS user
+
+5. Set DB_UNIQUE_NAME (Important for identify) -- Da lam o tren (1)
+6. Create the PFILE
+- SHUTDOWN IMMEDIATE;
+- STARTUP; -- STOP va START de DB nhan PARAMETER trong SPfile
+- CREATE PFILE FROM SPFILE; -- Chuyen file pfile sang cho Standby Database
+7. Config listener.ora
+8. Config tnsnames.ora
+
+
+################ 3. Create Standby from Primary (Duplicate, Active RMAN)
+--- ON THE STANDBY
+1. Copy PFILE to Standby, edit PFILE parameters (2 params)
+--------------------------------------------
+- cd $ORACLE_HOME/dbs
+- scp initorapri.ora db2:$ORACLE_HOME/dbs
+- scp orapwora    db2:$ORACLE_HOME/dbs
+-------- In the Primary before -------------
+- Tao Listener, chinh sua: 
+		SID_LIST_TAINGHE =
+		  (SID_LIST =
+			(SID_DESC = (GLOBAL_DBNAME = orapri) (ORACLE_HOME = /u01/app/oracle/product/19.0.0/dbhome_1) (SID_NAME = orapri))
+		  )
+- Sua tep initorapri.ora: db_unique_name='oras'
+- Sua Listener: db_unique_name='db2:1521'
+- Sua /etc/oratab - add orapri:/u01/app/oracle/product/19.0.0/dbhome_1:N -- Khong cho CSDL orapri bat khi khoi dong he thong
+- Tao folder audit: mkdir -p $ORACLE_BASE/admin/ora/adump
+- Tao thu muc:
+	+ mkdir /u02/oradata/orapri
+	+ mkdir /u02/oradata/orapri/fra/
+	+ mkdir /u02/oradata/orapri/arch1/
+- Chay xac nhan bien moi truong
+	+ . oraenv (chi nhan khi cai dat trong /etc/oratab)
+2. Start Standby NOMOUNT
+- STARTUP NOMOUNT pfile="$ORACLE_HOME/dbs/initorapri.ora"; -- NOMOUNT duoc khuyen khich dung khi Backup & Recovery, dam bao tinh nhat quan
+- Check Name va Listener:
+	+ SHOW PARAMETER NAME;
+	+ SHOW PARAMETER LISTENER;
+	
+3. Perform RMAN ACTIVE DUPLICATION
+	3.1 Primary connect TARGET
+	- Config TNSnames.ora truoc:
+		orap =
+		  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db1)(PORT = 1521))
+			(CONNECT_DATA = (SERVER = DEDICATED)  (SERVICE_NAME = ora)))
+
+		oras =
+		  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db2.db.com)(PORT = 1521))
+			(CONNECT_DATA = (SERVER = DEDICATED)  (SERVICE_NAME = ora))) 
+			
+	- rman TARGET sys/123@orap AUXILIARY sys/123@oras (LISTENER ca 2 deu bat, TARGET OPEN/AUX NOMOUNT)
+	- ****neu bi loi thi stop/start LISTENER ben STANDBY/PRIMARY lai
+	3.2 Standby connect AUXILLARY
+	- Nhu o tren
+	3.3 RMAN DUPLICATATE TARGET DATABASE FOR STANDBY (in Primary)
+	- Phai config TNSName va Listener ca 2 DB Server, sau do STOP/START lai
+	- DUPLICATE TARGET DATABASE -- Tao 1 ban sao cua CSDL chinh (Primary)
+		  FOR STANDBY -- Ban sao dung lam CSDL Standby
+		  FROM ACTIVE DATABASE -- Tao tu 1 CSDL dang hoat dong
+		  DORECOVER -- RMAN phuc hoi ban sao
+		  SPFILE -- SPfile, cho phep chinh sua tham so trong SPFILE, tab the hien sua
+			SET db_unique_name='oras' COMMENT 'IS STANDBY' -- dat ten cho ban sao, comment danh cho STANDBY
+		  NOFILENAMECHECK; -- ko kiem tra trung lap
+4. Create Standby Control File (in Standby)
+- ALTER DATABASE CREATE STANDBY CONTROLFILE AS '/u02/oradata/orapri/control_standby.ctl';
+-- "You cannot use a single control file for both the primary and standby databases. The standby instance is independent from the primary instance and so requires exclusive possession of its database files."
+
+################ 4. Enable Managed Recovery Process (MRP)
+--- ON THE PRIMARY - SET DG PARAMS
+**CREATE Standby Log (trong truong hop Switchover)
+- SHUTDOWN IMMEDIATE;
+- STARTUP;
+- ARCHIVE LOG LIST;
+- SHOW PARAMETER NAME;
+- SELECT MEMBER FROM V$LOGFILE;
+- Stanby: -- THREAD 1 cho INSTANCE 1; size standby >= online; so luong > online (best practice)
+	+ ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 4 ('/u02/oradata/orapri/standby_redo04.log') SIZE 202M; 
+	+ ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 5 ('/u02/oradata/orapri/standby_redo05.log') SIZE 202M; 
+	+ ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 6 ('/u02/oradata/orapri/standby_redo06.log') SIZE 202M; 
+	+ ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 7 ('/u02/oradata/orapri/standby_redo07.log') SIZE 202M;
+- Check: select thread#, group#, sequence#, status, bytes from v$standby_log;
+	+ thread: thread danh cho instance
+	+ group: ten nhom
+	+ sequence: sequence number, the hien so lan switch (https://www.dbasupport.com/forums/showthread.php?57792-Log-Sequence-Number-vs-System-Change-Number)
+	+ status: UNASSIGNED/ARC:YES standby san sang cho viec ghi redo data
+	+ bytes: size
+- Check: SELECT TYPE, MEMBER FROM V$LOGFILE ORDER BY GROUP#;
+1. Config LOG_ARCHIVE_DEST_1 for local
+- Cai nay da config trong response file -- Dia diem luu redo log local (archived)
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_1=
+	'LOCATION=/u02/oradata/orapri/arch1/
+	VALID_FOR=(ALL_LOGFILES,ALL_ROLES)
+	DB_UNIQUE_NAME=orap' scope=spfile;
+
+2. Config LOG_ARCHIVE_DEST_2 for remote -- Use TNSname, gui redo data sang Standby
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_2=
+	'SERVICE=oras ASYNC
+	VALID_FOR=(ALL_LOGFILES,PRIMARY_ROLE)
+	DB_UNIQUE_NAME=oras' SCOPE=SPFILE;
+	
+3. Config LOG_ARCHIVE_CONFIG to include Primary and Standby UNQ Name
+	ALTER SYSTEM SET LOG_ARCHIVE_CONFIG='DG_CONFIG=(orap,oras)';
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_1=ENABLE;
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_2=ENABLE;
+	ALTER SYSTEM SWITCH LOGFILE; -- Chuyen den mot online redo log khac
+	ALTER SYSTEM ARCHIVE LOG CURRENT; -- Archive redo log hien tai
+	select group#,sequence#,status,members from v$log;
+	archive log list;
+	
+4. Set FAL_CLIENT to Local Service Name
+	ALTER SYSTEM SET FAL_CLIENT='orap';
+	
+5. Set FAL_SERVER to Remote Service Name
+	ALTER SYSTEM SET FAL_SERVER='oras';
+	
+6. Config STANDBY_FILE_MANAGEMENT to AUTO
+	ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO; -- Dam bao tinh Consistency khi add/delete file tren Primary <AdminWorkshop 4-22>
+	
+7. Config STANDBY REDO LOG (SRL) files
+	ALTER DATABASE SET STANDBY DATABASE TO MAXIMIZE PERFORMANCE; -- rule for redo transport services (default: Max. Performance)
+	
+	SHUTDOWN IMMEDIATE;
+	STARTUP;
+	CREATE PFILE FROM SPFILE;
+	ALTER SESSION SET nls_date_format='DD-MON-YYYY HH24:MI:SS'; -- Thay doi hien thi ngay
+	SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#; -- Display Archived Log Information from Control File, include Archive Log Name
+	-- APPLIED: NO/IN-MEMORY/YES chi trang thai cua log file nhu the nao standby, always no for local
+	SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE;
+	-- SWITCHOVER_STATUS: NOT ALLOWED - chua co enabled standby database nao
+
+
+--- ON THE STANDBY - SET DG PARAMS (Same, but for Switch/Failover)
+***CONFIG
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 4 ('/u02/oradata/orapri/redo04.log') SIZE 202M; 
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 5 ('/u02/oradata/orapri/redo05.log') SIZE 202M;  
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 6 ('/u02/oradata/orapri/redo06.log') SIZE 202M;  
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 7 ('/u02/oradata/orapri/redo07.log') SIZE 202M; 
+1. Config LOG_ARCHIVE_DEST_1 for local
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_1=
+	'LOCATION=/u02/oradata/orapri/arch1/
+	VALID_FOR=(ALL_LOGFILES,ALL_ROLES)
+	DB_UNIQUE_NAME=orap' scope=spfile;
+	
+2. Config LOG_ARCHIVE_DEST_2 for remote
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_2=
+	'SERVICE=oras ASYNC
+	VALID_FOR=(ALL_LOGFILES,PRIMARY_ROLE)
+	DB_UNIQUE_NAME=oras' SCOPE=SPFILE;
+	
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_1=ENABLE;
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_2=ENABLE;
+	ALTER SYSTEM SET LOG_ARCHIVE_MAX_PROCESSES=30;
+	ALTER SYSTEM SET LOG_ARCHIVE_FORMAT='ora_%t_%s_%r.arc' SCOPE=SPFILE;
+	ALTER SYSTEM SET REMOTE_LOGIN_PASSWORDFILE=EXCLUSIVE SCOPE=SPFILE;
+
+3. Config LOG_ARCHIVE_CONFIG to include Primary and Standby UNQ Name
+	ALTER SYSTEM SET LOG_ARCHIVE_CONFIG='DG_CONFIG=(oras,orap)';
+
+4. Set FAL_CLIENT to Local Service Name
+	ALTER SYSTEM SET FAL_CLIENT='oras';
+
+5. Set FAL_SERVER to Remote Service Name
+	ALTER SYSTEM SET FAL_SERVER='orap';
+	ALTER SYSTEM SET LOCAL_LISTENER='db2:1521';
+	
+6. Config STANDBY_FILE_MANAGEMENT to AUTO
+	ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO;
+	ALTER DATABASE SET STANDBY DATABASE TO MAXIMIZE PERFORMANCE;
+	ALTER DATABASE FLASHBACK ON;
+	SHUTDOWN IMMEDIATE;
+	Startup;
+	CREATE PFILE FROM SPFILE;
+	
+7. Config STANDBY REDO LOG (SRL) files
+	nhu tren
+8. Start the MRP
+	ALTER DATABASE RECOVER MANAGED STANDBY DATABASE USING CURRENT LOGFILE DISCONNECT FROM SESSION;
+################ 5. Testing Log Shipping
+--- TESTING
+1. On the Primary - Perform some transactions
+2. Verify that the Transactions on the Primary have appeared on Standby
+
+
+# CHUONG 2
+################ 1. Enable Data Guard Broker
+1. Setup DG_BROKER_START to TRUE on Primary
+2. Setup DG_BROKER_START to TRUE on Standby
+3. Config DG_BROKER_CONFIG_FILE
+4. Create DG Config and add Primary
+5. Add the Standby in DG Config
+6. Config StaticConnectIdentifier DG Property with connection
+identifier that DGMRL client wil use when starting db instances
+7. Enable the configuration
+8. Perform the switchover using Data Guard Broker
+
+################ 2. Enable Fast-Start Failover
+1. Set LogXptMode=sync for Primary
+2. Set LogXptMode=sync for Standby
+3. Set protection mode as maxavailability
+4. Enable the Configuration
+5. Enable the Fast_Start Failover
+6. Enable the Observer
+
+
+# CHUONG 3
+################ 1. Add 3rd Standby
+1. Copy PFILE to Standby & edit PFILE
+2. Start NOMOUNT
+3. Perform RMAN ACTIVE DUPLICATION
+... Same
+
+
+
+
+###--------------CAU HINH LISTENER-----------------###
+[oracle@db1 ~]$ cat $ORACLE_HOME/network/admin/listener.ora
+TAINGHE =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = db1)(PORT = 1521))
+      (ADDRESS = (PROTOCOL = IPC)(KEY = EXTPROC1521))
+    )
+  )
+
+SID_LIST_TAINGHE =
+  (SID_LIST =
+    (SID_DESC = (GLOBAL_DBNAME = orapri) (ORACLE_HOME = /u01/app/oracle/product/19.0.0/dbhome_1) (SID_NAME = orapri))
+  )
+
+[oracle@db1 ~]$ cat $ORACLE_HOME/network/admin/tnsnames.ora
+orap =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db1)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SERVICE_NAME = orapri)))
+
+oras =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db2)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SERVICE_NAME = orapri)))
+
+
+[oracle@db2 ~]$ cat $ORACLE_HOME/network/admin/listener.ora
+TAINGHE =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = db2)(PORT = 1521))
+      (ADDRESS = (PROTOCOL = IPC)(KEY = EXTPROC1521))
+    )
+  )
+
+SID_LIST_TAINGHE =
+  (SID_LIST =
+    (SID_DESC = (GLOBAL_DBNAME = orapri) (ORACLE_HOME = /u01/app/oracle/product/19.0.0/dbhome_1) (SID_NAME = orapri))
+  )
+[oracle@db2 ~]$ cat $ORACLE_HOME/network/admin/tnsnames.ora
+orap =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db1)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SERVICE_NAME = orapri)))
+
+oras =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db2)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SERVICE_NAME = orapri)))

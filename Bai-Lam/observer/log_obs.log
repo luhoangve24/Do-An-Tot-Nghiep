@@ -1,0 +1,124 @@
+Observer 'luhoangve24' started
+[W000 2024-04-16T14:05:37.517+07:00] Observer trace level is set to USER
+[W000 2024-04-16T14:05:37.520+07:00] Try to connect to the primary.
+[W000 2024-04-16T14:05:37.522+07:00] Try to connect to the primary pri.
+[W000 2024-04-16T14:05:37.594+07:00] The standby sta is ready to be a FSFO target
+[W000 2024-04-16T14:05:38.608+07:00] Connection to the primary restored!
+[W000 2024-04-16T14:05:41.720+07:00] Disconnecting from database pri.
+[W000 2024-04-16T14:28:35.727+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:28:35.729+07:00] Fast-Start Failover threshold has not exceeded. Retry for the next 30 seconds
+[W000 2024-04-16T14:28:36.732+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:28:36.909+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:28:37.919+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:28:38.075+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:28:38.076+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:28:38.243+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:28:39.245+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:29:02.133+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:29:02.138+07:00] Fast-Start Failover threshold has not exceeded. Retry for the next 3 seconds
+[W000 2024-04-16T14:29:02.139+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:29:02.298+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:29:02.299+07:00] Fast-Start Failover threshold has not exceeded. Retry for the next 3 seconds
+[W000 2024-04-16T14:29:03.304+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:29:03.487+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:29:03.489+07:00] Fast-Start Failover threshold has not exceeded. Retry for the next 2 seconds
+[W000 2024-04-16T14:29:04.491+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:29:04.645+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:29:04.647+07:00] Fast-Start Failover threshold has not exceeded. Retry for the next 1 second
+[W000 2024-04-16T14:29:05.663+07:00] Try to connect to the primary.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:29:05.809+07:00] Primary database cannot be reached.
+[W000 2024-04-16T14:29:05.810+07:00] Fast-Start Failover threshold has expired.
+[W000 2024-04-16T14:29:05.812+07:00] Try to connect to the standby.
+[W000 2024-04-16T14:29:05.813+07:00] Making a last connection attempt to primary database before proceeding with Fast-Start Failover.
+[W000 2024-04-16T14:29:05.814+07:00] Check if the standby is ready for failover.
+[S002 2024-04-16T14:29:05.911+07:00] Fast-Start Failover started...
+
+2024-04-16T14:29:05.913+07:00
+Initiating Fast-Start Failover to database "sta"...
+[S002 2024-04-16T14:29:05.916+07:00] Initiating Fast-start Failover.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+Performing failover NOW, please wait...
+Failover succeeded, new primary is "sta"
+2024-04-16T14:29:32.855+07:00
+[S002 2024-04-16T14:29:32.858+07:00] Fast-Start Failover finished...
+[W000 2024-04-16T14:29:32.859+07:00] Failover succeeded. Restart pinging.
+[W000 2024-04-16T14:29:32.966+07:00] Primary database has changed to sta.
+[W000 2024-04-16T14:29:32.977+07:00] Try to connect to the primary.
+[W000 2024-04-16T14:29:32.978+07:00] Try to connect to the primary sta.
+[W000 2024-04-16T14:29:34.207+07:00] Connection to the primary restored!
+[W000 2024-04-16T14:29:34.310+07:00] The standby pri needs to be reinstated
+[W000 2024-04-16T14:29:34.314+07:00] Try to connect to the new standby pri.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:29:36.334+07:00] Disconnecting from database sta.
+[W000 2024-04-16T14:30:04.855+07:00] Try to connect to the new standby pri.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:30:34.063+07:00] Try to connect to the new standby pri.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:31:04.275+07:00] Try to connect to the new standby pri.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:31:34.480+07:00] Try to connect to the new standby pri.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:32:04.727+07:00] Try to connect to the new standby pri.
+ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+Unable to connect to database using pri
+[W000 2024-04-16T14:32:34.889+07:00] Try to connect to the new standby pri.
+[W000 2024-04-16T14:32:36.021+07:00] Connection to the new standby restored!
+[W000 2024-04-16T14:33:08.318+07:00] Try to connect to the primary sta.
+[W000 2024-04-16T14:33:09.335+07:00] Connection to the primary restored!
+[W000 2024-04-16T14:33:10.348+07:00] Wait for new primary to be ready to reinstate.
+[W000 2024-04-16T14:33:10.451+07:00] New primary is now ready to reinstate.
+[W000 2024-04-16T14:33:11.456+07:00] Issuing REINSTATE command.
+
+2024-04-16T14:33:11.461+07:00
+Initiating reinstatement for database "pri"...
+Reinstating database "pri", please wait...
+[W000 2024-04-16T14:33:31.272+07:00] The standby pri is ready to be a FSFO target
+Reinstatement of database "pri" succeeded
+2024-04-16T14:34:02.903+07:00
+[W000 2024-04-16T14:34:03.541+07:00] Successfully reinstated database pri.
+2024-04-16T14:36:48.268+07:00
+Observer 'luhoangve24' stopped
+Observer 'luhoangve24' started
+[W000 2024-04-16T15:20:45.446+07:00] Observer trace level is set to USER
+[W000 2024-04-16T15:20:45.477+07:00] Try to connect to the primary.
+[W000 2024-04-16T15:20:45.478+07:00] Try to connect to the primary sta.
+[W000 2024-04-16T15:20:45.620+07:00] The standby pri is ready to be a FSFO target
+[W000 2024-04-16T15:20:46.629+07:00] Connection to the primary restored!
+[W000 2024-04-16T15:20:49.773+07:00] Disconnecting from database sta.

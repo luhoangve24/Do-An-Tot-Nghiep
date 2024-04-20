@@ -1,0 +1,431 @@
+
+
+
+++++++++++++++++++++++++++++++++ BROKER SETUP ++++++++++++++++++++++++++++++++++
+								 ============
+
+			1. SET UP DMON PROCESS PRIMARY & STANDBY, SOME OTHERS CONFIG
+			============================================================
+
+	alter system set DG_BROKER_START=TRUE SCOPE=BOTH;
+	-- Turn the DMON process on in both Databases, if not set, can't add to DG CONFIG
+	
+	alter system set LOG_ARCHIVE_DEST_2='';
+	--  for all databases to be added to a broker
+	--	configuration any , any LOG ARCHIVE DEST n _ARCHIVE_DEST_n 
+	--	parameters that have the SERVICE attribute set must be cleared
+
+
+			2. CONFIG THE DG_BROKER_CONFIG_FILE (for RAC, not require)
+			==========================================================
+			
+						3. CREATE DG CONFIG & ADD PRIMARY, STANDBY
+						=================================
+						
+						
+	-- Perform the Pre-check: Is there a Broker's config?
+	> ---
+	[oracle@db1 ~]$ dgmgrl sys/123 as sysdba || dgmgrl / as sysdba
+	
+	DGMGRL> show configuration;
+	ORA-16532: Oracle Data Guard broker configuration does not exist
+
+	Configuration details cannot be determined by DGMGRL
+	> ---
+	
+	-- DGMGRL> CONNECT username/password[@connect-identifier/tnsnames]
+	-- Check who has SYSDG priviledge: SQL> select * from v$pwfile_users;
+	
+	-- Define the broker creation and create a profile for the primary database
+	DGMGRL> create configuration 'DRSHBfinSolution' as primary database is 'pri' connect identifier is pri;
+	-- DRSHBfinSolution: user-specified name for configuration # Disaster Recovery SHB Financial Solution :)
+	-- 'pri': reference to primary with DB_UNIQUE_NAME
+	-- pri: Oracle Net Services naming method use this to communicate with other DB in configuration. Same for DGConnectIdentifier 
+	
+	-- Adding a Standby to the Configuration
+	DGMGRL> add database 'sta' as connect identifier is 'sta' maintained as physical;
+	-- Same, but notice that: if TNS is used as the naming method, you must ensure that the tnsnames.ora file
+	-- on every database and instance 
+	
+	-- That must be setup, notice that match Listener & Service Name
+	edit database pri set property staticconnectidentifier='(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(PORT=1521)(HOST=db1))(CONNECT_DATA=(SERVICE_NAME=shbfin)(INSTANCE_NAME=shbfin)(SERVER=DEDICATED)))';
+	edit database sta set property staticconnectidentifier='(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(PORT=1521)(HOST=db2))(CONNECT_DATA=(SERVICE_NAME=shbfin)(INSTANCE_NAME=shbfin)(SERVER=DEDICATED)))';
+	
+	-- Change some properties
+	edit database pri set property ApplyLagThreshold=0;
+	edit database pri set property TransportLagThreshold=0;
+	edit database sta set property ApplyLagThreshold=0;
+	edit database sta set property TransportLagThreshold=0;
+	
+	-- Check
+	show database verbose pri;
+	show database verbose sta;
+	
+								
+									4. ENABLE CONFIG
+									================
+	-- Enable it
+	enable configuration;
+	show configuration;
+	
+
+									5. SWITCHOVER
+									=============
+									
+	DGMGRL> switchover to 'sta';
+	
+	SQL> select open_mode from v$database;
+
+	OPEN_MODE
+	--------------------
+	CLOSED BY SWITCHOVER
+	
+									6. MONITOR
+									==========
+	
+	show database verbose pri
+	show database verbose sta
+	show configuration
+	
+	-- Check log file
+	SELECT TYPE, MEMBER FROM V$LOGFILE ORDER BY GROUP#;
+
+	
+	
+									7. TESTING
+									==========
+									
+		SQL> INSERT INTO TEST1 VALUES (09, 'kaka');
+		1 row created.
+							
+		SQL> INSERT INTO TEST1 VALUES (08, 'hihi');
+
+		1 row created.
+
+		SQL> COMMIT;
+
+		Commit complete.
+
+		SQL> select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+			GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+		---------- ---------- ---------------- ---------------
+				 1         28 INACTIVE                     200
+				 2         29 INACTIVE                     200
+				 3         30 CURRENT                      200
+
+		SQL> archive log list;
+		Database log mode              Archive Mode
+		Automatic archival             Enabled
+		Archive destination            /u02/oradata/shbfin/arch1/
+		Oldest online log sequence     28
+		Next log sequence to archive   30
+		Current log sequence           30
+
+		
+		
+		
+		STANDBY
+		SQL> select group#, sequence#, status, bytes/1024/1024 from v$standby_log;
+
+			GROUP#  SEQUENCE# STATUS     BYTES/1024/1024
+		---------- ---------- ---------- ---------------
+				 4         30 ACTIVE                 200
+				 5          0 UNASSIGNED             200
+				 6          0 UNASSIGNED             200
+				 7          0 UNASSIGNED             200
+		
+		
+		SQL> select * from TEST1;
+
+				C1 C2
+		---------- ------
+				52 rap
+				56 cap
+				53 trap
+				54 vamp
+				61 help
+				66 trapi
+				14 vu
+				 9 kaka
+				 8 hihi
+
+		9 rows selected.
+
+
+
+		PRIM
+
+		SQL> ALTER SYSTEM SWITCH LOGFILE;
+
+		System altered.
+
+		SQL> select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+			GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+		---------- ---------- ---------------- ---------------
+				 1         31 CURRENT                      200
+				 2         29 INACTIVE                     200
+				 3         30 ACTIVE                       200
+
+		SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+		 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+		---------- --------- --------- ---------
+				 7 11-APR-24 11-APR-24 YES
+				 8 11-APR-24 11-APR-24 YES
+				 9 11-APR-24 11-APR-24 YES
+				10 11-APR-24 11-APR-24 YES
+				11 11-APR-24 11-APR-24 YES
+				12 11-APR-24 11-APR-24 YES
+				13 11-APR-24 11-APR-24 YES
+				14 11-APR-24 11-APR-24 YES
+				15 11-APR-24 11-APR-24 YES
+				16 11-APR-24 11-APR-24 YES
+				17 11-APR-24 11-APR-24 YES
+
+		 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+		---------- --------- --------- ---------
+				18 11-APR-24 11-APR-24 YES
+				19 11-APR-24 12-APR-24 YES
+				20 12-APR-24 12-APR-24 YES
+				21 12-APR-24 12-APR-24 YES
+				22 12-APR-24 12-APR-24 YES
+				23 12-APR-24 13-APR-24 YES
+				24 13-APR-24 13-APR-24 YES
+				25 13-APR-24 13-APR-24 YES
+				26 13-APR-24 13-APR-24 YES
+				27 13-APR-24 13-APR-24 YES
+				28 13-APR-24 13-APR-24 NO
+
+		 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+		---------- --------- --------- ---------
+				28 13-APR-24 13-APR-24 YES
+				29 13-APR-24 13-APR-24 NO
+				29 13-APR-24 13-APR-24 YES
+				30 13-APR-24 13-APR-24 NO
+				30 13-APR-24 13-APR-24 NO
+
+		27 rows selected.
+		
+		
+		
+		STA
+		SQL> select group#, sequence#, status, bytes/1024/1024 from v$standby_log;
+
+			GROUP#  SEQUENCE# STATUS     BYTES/1024/1024
+		---------- ---------- ---------- ---------------
+				 4         31 ACTIVE                 200
+				 5          0 UNASSIGNED             200
+				 6          0 UNASSIGNED             200
+				 7          0 UNASSIGNED             200
+				 
+		
+		PRIMARY
+		ALTER SYSTEM ARCHIVE LOG CURRENT;
+		
+		
+
++++++++++++++++++++++++++++++++ OBSERVER & FAST-START FAILOVER +++++++++++++++++++++++
+
+
+
+edit database pri set property 'LogXptMode'='sync';
+edit database sta set property 'LogXptMode'='sync';
+edit configuration set protection mode as maxavailability;
+enable  configuration;
+enable fast_start failover;
+show configuration;
+show fast_start failover;
+
+start observer file is /home/oracle/fsfo.dat logfile is /home/oracle/logob.log; -- this is foreground process 
+start observer file is D:\Workspace\2023-2024-Ki-I\Do-An-Tot-Nghiep\Bai-Lam\observer\obs.dat logfile is D:\Workspace\2023-2024-Ki-I\Do-An-Tot-Nghiep\Bai-Lam\observer\log_obs.log;
+nohup dgmgrl sys/123@pri "start observer file='$ORACLE_HOME/dbs/fsfo.dat'" -logfile $HOME/logob.dat & -- give it to background
+
+++++++++ TESTCASE
+-- Some important processes for normally operating instance: DBWr, LGWr, PMON, SMON, ... -> kill it -> instance down
+-- Kill PMON process in Primary for testing
+ps -ef | grep -i pmon -- -ef: full, elec (PRI)
+kill -9 <UID> -- 9: SIGKILL (root)
+
+
+
+		DGMGRL> show configuration
+
+		Configuration - DRSHBfinSolution
+
+		  Protection Mode: MaxAvailability
+		  Members:
+		  pri - Primary database
+			Error: ORA-12514: TNS:listener does not currently know of service requested in connect descriptor
+
+			sta - (*) Physical standby database
+
+		Fast-Start Failover: Enabled in Zero Data Loss Mode
+
+		Configuration Status:
+		ERROR   (status updated 0 seconds ago)
+
+
+
+		DGMGRL> show configuration
+		ORA-01089: immediate shutdown or close in progress - no operations are permitted
+		Process ID: 7133
+		Session ID: 24 Serial number: 23476
+
+		Configuration details cannot be determined by DGMGRL
+
+
+
+		DGMGRL> show configuration
+
+		Configuration - DRSHBfinSolution
+
+		  Protection Mode: MaxAvailability
+		  Members:
+		  sta - Primary database
+			Warning: ORA-16824: multiple warnings, including fast-start failover-related warnings, detected for the database
+
+			pri - (*) Physical standby database (disabled)
+			  ORA-16661: the standby database needs to be reinstated
+
+		Fast-Start Failover: Enabled in Zero Data Loss Mode
+
+		Configuration Status:
+		WARNING   (status updated 30 seconds ago)
+
+
+		SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE; (STA)
+		sta	NOT ALLOWED	PRIMARY	READ WRITE
+
+
+		(IN PRI)
+		startup;
+		SQL>startup
+		ORACLE instance started.
+
+		Total System Global Area  998243552 bytes
+		Fixed Size                  8903904 bytes
+		Variable Size             310378496 bytes
+		Database Buffers          671088640 bytes
+		Redo Buffers                7872512 bytes
+		Database mounted.
+		ORA-16649: possible failover to another database prevents this database from
+		being opened
+	
+	
+		DGMGRL> show configuration
+
+		Configuration - DRSHBfinSolution
+
+		  Protection Mode: MaxAvailability
+		  Members:
+		  sta - Primary database
+			Warning: ORA-16824: multiple warnings, including fast-start failover-related warnings, detected for the database
+
+			pri - (*) Physical standby database
+			  Error: ORA-16816: incorrect database role
+
+		Fast-Start Failover: Enabled in Zero Data Loss Mode
+
+		Configuration Status:
+		ERROR   (status updated 34 seconds ago)
+		
+		
+		DGMGRL> Cshow configuration
+
+		Configuration - DRSHBfinSolution
+
+		  Protection Mode: MaxAvailability
+		  Members:
+		  sta - Primary database
+			Warning: ORA-16817: unsynchronized fast-start failover configuration
+
+			pri - (*) Physical standby database
+
+		Fast-Start Failover: Enabled in Zero Data Loss Mode
+
+		Configuration Status:
+		WARNING   (status updated 24 seconds ago)
+		
+		SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE;
+		pri	NOT ALLOWED	PHYSICAL STANDBY	READ ONLY WITH APPLY
+
+
+
+		DGMGRL> show configuration
+
+		Configuration - DRSHBfinSolution
+
+		  Protection Mode: MaxAvailability
+		  Members:
+		  sta - Primary database
+			pri - (*) Physical standby database
+
+		Fast-Start Failover: Enabled in Zero Data Loss Mode
+
+		Configuration Status:
+		SUCCESS   (status updated 51 seconds ago)
+		
+		
+	-- From Standby (sta), Switchover again to the old primary for normal role.
+	switchover to 'sta';
+	
+	DGMGRL> switchover to 'pri'
+	Performing switchover NOW, please wait...
+	Operation requires a connection to database "pri"
+	Connecting ...
+	Connected to "pri"
+	Connected as SYSDBA.
+	New primary database "pri" is opening...
+	Operation requires start up of instance "shbfin" on database "sta"
+	Starting instance "shbfin"...
+	Connected to an idle instance.
+	ORACLE instance started.
+	Connected to "sta"
+	Database mounted.
+	Database opened.
+	Connected to "sta"
+	Switchover succeeded, new primary is "pri"
+
+
+	DGMGRL> show configuration
+
+	Configuration - DRSHBfinSolution
+
+	  Protection Mode: MaxAvailability
+	  Members:
+	  pri - Primary database
+		Error: ORA-16825: multiple errors or warnings, including fast-start failover-related errors or warnings, detected for the database
+
+		sta - (*) Physical standby database
+		  Error: ORA-16786: unable to access Oracle Data Guard broker configuration files
+
+	Fast-Start Failover: Enabled in Zero Data Loss Mode
+
+	Configuration Status:
+	ERROR   (status updated 43 seconds ago)
+	
+
+	DGMGRL> show configuration
+
+	Configuration - DRSHBfinSolution
+
+	  Protection Mode: MaxAvailability
+	  Members:
+	  pri - Primary database
+		sta - (*) Physical standby database
+
+	Fast-Start Failover: Enabled in Zero Data Loss Mode
+
+	Configuration Status:
+	SUCCESS   (status updated 18 seconds ago)
+
+	
+		
+++++++++ MONITOR & SETUP
+enable fast_start failover;
+disable fast_start failover;
+show observer
+stop observer
+show configuration verbose;

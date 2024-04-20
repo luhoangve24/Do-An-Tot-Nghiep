@@ -1,0 +1,1132 @@
+# OS: Oracle Linux 7.9, DB: Oracle Database 19c
+# Primary: (host: db1, db_name: shbfin, db_unique_name: pri), running an instance
+# Standby: (host: db2, db_name: shbfin, db_unique_name: sta), only software only installation
+# Port for Listener: 1521, disable all blocking (Firewall, etc.)
+# $ORACLE_BASE=/u01/app/oracle
+# $ORACLE_HOME=$ORACLE_BASE/product/19.0.0/dbhome_1
+
+1. Prepare the primary database.
+2. Set parameters on the physical standby database.
+3. Configure Oracle Net Services.
+4. Start the standby database instance.
+5. Execute the DUPLICATE TARGET DATABASE FOR
+STANDBY FROM ACTIVE DATABASE RMAN command.
+6. Start the transport and application of redo
+
+
+-----
+
+++++++++++++++++++++   1. SETUP ON THE PRIMARY SHBFIN DATABASE +++++++++++++++++++++++
+
+	-- Cloud
+		sudo su - # to use opc user
+		password Oracle: Vulehoang123@
+	-- Software installation
+	-- follow guide
+	$ unzip -oq LINUX...
+	$ cd $ORACLE_HOME
+	$ . runInstaller -silent -responseFile /home/oracle/software-installation.rsp
+	
+	-- Create folder for creating database (with oracle user)
+	mkdir -p $ORACLE_BASE/admin/shbfin/adump
+	mkdir /u02/oradata/shbfin
+	mkdir /u02/oradata/shbfin/fra
+	mkdir /u02/oradata/shbfin/arch1
+
+	-- Listener configuration (the end of page)
+	
+	-- Create database
+	lsnrctl start TAINGHE
+	cd /home/oracle/DATAGUARD/
+	cat database-installation.rsp
+	dbca -silent -createDatabase -responseFile database-installation.rsp
+	* CHECKPOINT in VMs
+	--
+	. oraenv
+	shbfin
+	sqlplus / as sysdba	
+	
+	-- Change DB Unique Name
+	SHOW PARAMETER NAME;
+	ALTER SYSTEM SET DB_UNIQUE_NAME='pri'   SCOPE=SPFILE;
+	
+	-- Reset param for Fast Recovery (if no specification)
+	ALTER SYSTEM RESET DB_RECOVERY_FILE_DEST SCOPE=SPFILE;
+	
+	-- Archive Log for Redo data locally
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_1= 
+	'LOCATION=/u02/oradata/shbfin/arch1/
+	VALID_FOR=(ALL_LOGFILES,ALL_ROLES)
+	DB_UNIQUE_NAME=pri' scope=spfile;
+	
+	-- Restart for changes
+	SHUTDOWN IMMEDIATE;
+	STARTUP MOUNT;
+	SHOW PARAMETER NAME;
+	SHOW PARAMETER LOG_ARCHIVE_DEST_1;
+	
+	-- Pre-Check for Mode
+	SELECT NAME, DB_UNIQUE_NAME, OPEN_MODE, LOG_MODE, FLASHBACK_ON, FORCE_LOGGING FROM V$DATABASE;
+	> SHBFIN	pri	MOUNTED	NOARCHIVELOG	NO	NO
+	SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE;
+	> pri	NOT ALLOWED	PRIMARY	MOUNTED
+	
+	-- Turn archive mode on
+	SELECT log_mode FROM v$database;
+	> NOARCHIVELOG
+	ARCHIVE LOG LIST;
+	>---
+	Database log mode                       No Archive Mode
+	Automatic archival                      Disabled
+	Archive destination                     USE_DB_RECOVERY_FILE_DEST
+	Oldest online log sequence              3
+	Current log sequence                    5
+	>---
+	shutdown immediate;
+	startup mount;
+	alter database archivelog;
+	alter database open;
+	archive log list;
+	> ---
+	Database log mode              Archive Mode
+	Automatic archival             Enabled
+	Archive destination            /u01/app/oracle/product/19.0.0/dbhome_1/dbs/arch
+	Oldest online log sequence     3
+	Next log sequence to archive   5
+	Current log sequence           5
+	> ---
+	-- Check Archive which Redo Log?
+	SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+	>---
+	no rows selected
+	>---
+	
+	
+	-- Turn force logging mode on
+	select group#,sequence#,status,members from v$log;
+	> ---
+		GROUP#  SEQUENCE# STATUS              MEMBERS
+	---------- ---------- ---------------- ----------
+			 1          4 INACTIVE                  1
+			 2          5 CURRENT                   1
+			 3          3 INACTIVE                  1
+	> ---
+	
+	
+	ALTER DATABASE FORCE LOGGING;
+	
+	
+	-- Check again
+	SELECT NAME, DB_UNIQUE_NAME, OPEN_MODE, LOG_MODE, FLASHBACK_ON, FORCE_LOGGING FROM V$DATABASE;
+	SHBFIN	pri	READ WRITE	ARCHIVELOG	NO	YES
+	
+	
+	-- Make sure at least one logfile present
+	ALTER SYSTEM SWITCH LOGFILE; -- switch from 2 to 3
+	select group#,sequence#,status,members from v$log;
+	> ---
+		GROUP#  SEQUENCE# STATUS              MEMBERS
+	---------- ---------- ---------------- ----------
+			 1          4 INACTIVE                  1
+			 2          5 ACTIVE                    1
+			 3          6 CURRENT                   1
+	> ---
+	
+	
+	SELECT MEMBER FROM V$LOGFILE;
+	> ---
+	MEMBER
+	--------------------------------------------------------------------------------
+	/u02/oradata/shbfin/redo03.log
+	/u02/oradata/shbfin/redo02.log
+	/u02/oradata/shbfin/redo01.log
+	> ---
+	
+	
+	ARCHIVE LOG LIST;
+	> ---
+	Database log mode              Archive Mode
+	Automatic archival             Enabled
+	Archive destination            /u02/oradata/shbfin/arch1/
+	Oldest online log sequence     4
+	Next log sequence to archive   6
+	Current log sequence           6
+	> ---
+	
+	
+	-- Check again Archive which Redo Log?
+	SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+	> ---
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 5 11-APR-24 11-APR-24 NO
+	> ---
+	
+	
+	-- Check size of redo log
+	select GROUP#,THREAD#,SEQUENCE#,bytes/1024/1024 from v$log;
+	> ---
+		GROUP#    THREAD#  SEQUENCE# BYTES/1024/1024    MEMBERS STATUS
+	---------- ---------- ---------- --------------- ---------- ----------------
+			 1          1          4             200          1 INACTIVE
+			 2          1          5             200          1 INACTIVE
+			 3          1          6             200          1 CURRENT
+	> ---
+	
+	
+	-- Create Standby Redo Log ### Lưu ý, nên tạo sau khi backup sang Standby
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 4 ('/u02/oradata/shbfin/stb_redo04.log') SIZE 200M; 
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 5 ('/u02/oradata/shbfin/stb_redo05.log') SIZE 200M; 
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 6 ('/u02/oradata/shbfin/stb_redo06.log') SIZE 200M; 
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 7 ('/u02/oradata/shbfin/stb_redo07.log') SIZE 200M;
+	
+	select thread#, group#, sequence#, status, bytes/1024/1024 from v$standby_log;
+	> ---
+	   THREAD#     GROUP#  SEQUENCE# STATUS     BYTES/1024/1024
+	---------- ---------- ---------- ---------- ----------
+			 1          4          0 UNASSIGNED  200
+			 1          5          0 UNASSIGNED  200
+			 1          6          0 UNASSIGNED  200
+			 1          7          0 UNASSIGNED  200
+	> ---
+	
+	SELECT TYPE, MEMBER FROM V$LOGFILE ORDER BY GROUP#;
+	> ---
+	TYPE    MEMBER
+	------- ------------------------------------------------------------------------
+	ONLINE  /u02/oradata/shbfin/redo01.log
+	ONLINE  /u02/oradata/shbfin/redo02.log
+	ONLINE  /u02/oradata/shbfin/redo03.log
+	STANDBY /u02/oradata/shbfin/stb_redo04.log
+	STANDBY /u02/oradata/shbfin/stb_redo05.log
+	STANDBY /u02/oradata/shbfin/stb_redo06.log
+	STANDBY /u02/oradata/shbfin/stb_redo07.log
+	> ---
+	
+	
+	-- Some others configuration
+	-- ALTER SYSTEM SET LOCAL_LISTENER='db1:1521' SCOPE=SPFILE;
+	ALTER SYSTEM SET LOCAL_LISTENER='(ADDRESS=(PROTOCOl=TCP)(HOST=db1)(PORT=1521))' SCOPE=SPFILE;
+	ALTER SYSTEM SET LOG_ARCHIVE_MAX_PROCESSES=30 SCOPE=SPFILE;
+	ALTER SYSTEM SET LOG_ARCHIVE_FORMAT='ora_%t_%s_%r.arc' SCOPE=SPFILE; 
+	ALTER SYSTEM SET DB_RECOVERY_FILE_DEST_SIZE = 5G      SCOPE=SPFILE;
+	ALTER SYSTEM SET DB_RECOVERY_FILE_DEST = '/u02/oradata/shbfin/fra/'  SCOPE=SPFILE;
+	ALTER SYSTEM SET DB_FLASHBACK_RETENTION_TARGET = 60    SCOPE=SPFILE;
+	ALTER SYSTEM SET REMOTE_LOGIN_PASSWORDFILE=EXCLUSIVE   SCOPE=SPFILE;
+	ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO SCOPE=SPFILE;
+	CREATE PFILE FROM SPFILE;
+	SHUTDOWN IMMEDIATE;
+	STARTUP; -- Verify changes
+	
+	
+	-- Turn Flashback mode on
+	ALTER DATABASE FLASHBACK ON; -- Require Fast Recovery Area
+	SELECT NAME, DB_UNIQUE_NAME, OPEN_MODE, LOG_MODE, FLASHBACK_ON, FORCE_LOGGING FROM V$DATABASE;
+	> SHBFIN	pri	READ WRITE	ARCHIVELOG	YES	YES
+	
+	### INSTALL THE STANDBY SOFTWARE FIRST! (in the Standby part)
+	
+	-- Copy init & password for db2 host (in the cloud, prepare the SSH Key)
+	cd $ORACLE_HOME/dbs
+	scp initshbfin.ora db2:$ORACLE_HOME/dbs (in the cloud: scp <file_name> <user>@<server>:<file_name>)
+	scp orapwshbfin    db2:$ORACLE_HOME/dbs
+	
+	### THEN COME TO STANDBY AGAIN FOR INIT PARAM CHANGES (db_unique_name, LOCAL_LISTENER)
+	
+
+
++++++++++++++++++++++++++  2. SETUP ON THE STANDBY - RESTORE  +++++++++++++++++++++++
+	
+	### BEGIN OF INSTALLATION
+	
+	-- Software installation
+	-- follow guide
+	$ unzip -oq LINUX...
+	$ cd $ORACLE_HOME
+	$ . runInstaller -silent -responseFile /home/oracle/software-installation.rsp
+	
+	-- Create folder for creating database (with oracle user)
+	mkdir -p $ORACLE_BASE/admin/shbfin/adump
+	mkdir /u02/oradata/shbfin
+	mkdir /u02/oradata/shbfin/fra
+	mkdir /u02/oradata/shbfin/arch1
+	
+	-- Listener configuration (the end of page)
+	
+	-- Config in /etc/oratab for path & auto-startup
+	$ vi /etc/oratab
+	INSERT: shbfin:/u01/app/oracle/product/19.0.0/dbhome_1:N
+
+	### END OF INSTALLATION
+
+
+	### BEGIN OF INIT PARAM
+	
+	cd $ORACLE_HOME/dbs
+	vi initshbfin.ora
+	db_unique_name = 'sta'
+	-- LOCAL_LISTENER = 'db2:1521'	
+	log_archive_dest_1 -> db_unique_name = 'sta'
+	
+	### END OF INIT PARAM
+	
+	-- Verify changes;
+	STARTUP NOMOUNT pfile="$ORACLE_HOME/dbs/initshbfin.ora"; -- CAN'T MOUNT because I don't have the Control File
+	SHOW PARAMETER NAME;
+	> ---
+	NAME                                 TYPE        VALUE
+	------------------------------------ ----------- ------------------------------
+	cdb_cluster_name                     string
+	cell_offloadgroup_name               string
+	db_file_name_convert                 string
+	db_name                              string      shbfin
+	db_unique_name                       string      sta
+	global_names                         boolean     FALSE
+	instance_name                        string      shbfin
+	lock_name_space                      string
+	log_file_name_convert                string
+	pdb_file_name_convert                string
+	processor_group_name                 string
+
+	NAME                                 TYPE        VALUE
+	------------------------------------ ----------- ------------------------------
+	service_names                        string      sta
+	> ---
+
+
+
+++++++++++++++++++++++  3. RMAN DUPLICATE FOR STANDBY (IN PRIMARY)  ++++++++++++++++++
+	
+	-- CLOUD
+	iptables -P INPUT ACCEPT
+	iptables -P OUTPUT ACCEPT
+	iptables -P FORWARD ACCEPT
+	iptables -F
+	rman TARGET sys/123@pri AUXILIARY sys/123@sta
+	DUPLICATE TARGET DATABASE
+	  FOR STANDBY
+	  FROM ACTIVE DATABASE
+	  DORECOVER
+	  SPFILE
+		SET db_unique_name = 'sta' COMMENT 'IS STANDBY'
+		SET local_listener = '(ADDRESS=(PROTOCOl=TCP)(HOST=target)(PORT=1521))' COMMENT 'IS STANDBY'
+		SET log_archive_dest_1 = 'LOCATION=/u02/oradata/shbfin/arch1/
+                                 VALID_FOR=(ALL_LOGFILES,ALL_ROLES)
+                                  DB_UNIQUE_NAME=sta' COMMENT 'IS STANBY'
+	  NOFILENAMECHECK;
+	  
+	 -- *** NOTE: all service name -> SID in tnsnames.ora 
+	 
+	-- After Duplicate, Standby had archive onlinelog in FRA, this is backup of Primary (3 Online & 4 Standby)
+	> ---
+	o1_mf_1_m1h4fqyh_.log  o1_mf_4_m1h4frow_.log  o1_mf_7_m1h4fsfh_.log
+	o1_mf_2_m1h4fr6w_.log  o1_mf_5_m1h4frxc_.log
+	o1_mf_3_m1h4frgd_.log  o1_mf_6_m1h4fs60_.log
+	> ---
+
+	
+	-- Start Nomount for backup with PFILE from Primary
+	. oraenv
+	shbfin
+	sqlplus / as sysdba
+	STARTUP NOMOUNT PFILE='$ORACLE_HOME/dbs/initshbfin.ora';
+	SHOW PARAMETER NAME;
+	
+	-- RMAN Duplicate, Active Restore
+	rman TARGET sys/123@pri AUXILIARY sys/123@sta
+	DUPLICATE TARGET DATABASE
+	  FOR STANDBY
+	  FROM ACTIVE DATABASE
+	  DORECOVER
+	  SPFILE
+		SET db_unique_name='sta' COMMENT 'IS STANDBY'
+		SET LOCAL_LISTENER='db2:1521' COMMENT 'IS LISTENER FOR STANDBY'
+	  NOFILENAMECHECK;
+	  
+	
+	
+++++++++++++++++++++++++++++++  4. CONFIG DATAGUARD PRIMARY  +++++++++++++++++++++++++
+
+
+	-- Set redo transport destination for redo log remotely
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_2=
+	'SERVICE=sta ASYNC
+	VALID_FOR=(ALL_LOGFILES,PRIMARY_ROLE)
+	DB_UNIQUE_NAME=sta' SCOPE=SPFILE;
+	
+	-- Set up list of Primary and Standby for enabling the database to send redo data
+	ALTER SYSTEM SET LOG_ARCHIVE_CONFIG='DG_CONFIG=(pri,sta)';
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_1=ENABLE;
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_2=ENABLE;
+	
+	-- Set up Fetch Archive Log and File Manager
+	ALTER SYSTEM SET FAL_CLIENT='pri';
+	ALTER SYSTEM SET FAL_SERVER='sta';
+	
+	-- Set up protection mode
+	ALTER DATABASE SET STANDBY DATABASE TO MAXIMIZE PERFORMANCE;
+	
+	
+	-- Verify CHANGES
+	SHUTDOWN IMMEDIATE;
+	STARTUP;
+	
+	
+	CREATE PFILE FROM SPFILE;
+	ALTER SESSION SET nls_date_format='DD-MON-YYYY HH24:MI:SS';
+	SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED   FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+	SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE,PROTECTION_MODE FROM V$DATABASE;
+	> pri	FAILED DESTINATION	PRIMARY	READ WRITE	MAXIMUM PERFORMANCE
+	
+	
+	
+	
+++++++++++++++++++++++++++++++  5. CONFIG DATAGUARD STANDBY  +++++++++++++++++++++++++
+
+
+
+	-- Create Standby Control File
+	ALTER DATABASE CREATE STANDBY CONTROLFILE AS '/u02/oradata/shbfin/control_standby.ctl';
+	SHUTDOWN IMMEDIATE;
+	STARTUP MOUNT;
+	
+	-- Create Standby Redo Log
+	### ERROR: I MUST REMOVE THE STANDBY LOG I HAVE CREATE BEFORE BACKUP :)
+	### alter database drop standby logfile group 4; (5,6,7)
+	SHOW PARAMETER NAME;
+	SELECT MEMBER FROM V$LOGFILE;
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 4 ('/u02/oradata/shbfin/stb_redo04.log') SIZE 200M; 
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 5 ('/u02/oradata/shbfin/stb_redo05.log') SIZE 200M; 
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 6 ('/u02/oradata/shbfin/stb_redo06.log') SIZE 200M; 
+	ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP 7 ('/u02/oradata/shbfin/stb_redo07.log') SIZE 200M;
+	select thread#, group#, sequence#, status, bytes from v$standby_log;
+	> ---
+	   THREAD#     GROUP#  SEQUENCE# STATUS          BYTES
+	---------- ---------- ---------- ---------- ----------
+			 1          4          0 UNASSIGNED  209715200
+			 1          5          0 UNASSIGNED  209715200
+			 1          6          0 UNASSIGNED  209715200
+			 1          7          0 UNASSIGNED  209715200
+	> ---
+	
+	
+	SELECT TYPE,MEMBER FROM V$LOGFILE ORDER BY GROUP#;
+	> ---
+	TYPE    MEMBER
+	------- ------------------------------------------------------------------------
+	ONLINE  /u02/oradata/shbfin/fra/STA/onlinelog/o1_mf_1_m1h4fqyh_.log
+	ONLINE  /u02/oradata/shbfin/fra/STA/onlinelog/o1_mf_2_m1h4fr6w_.log
+	ONLINE  /u02/oradata/shbfin/fra/STA/onlinelog/o1_mf_3_m1h4frgd_.log
+	STANDBY /u02/oradata/shbfin/stb_redo04.log
+	STANDBY /u02/oradata/shbfin/stb_redo05.log
+	STANDBY /u02/oradata/shbfin/stb_redo06.log
+	STANDBY /u02/oradata/shbfin/stb_redo07.log
+	> ---
+	
+	
+	-- Set for remote archive location
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_2=
+	'SERVICE=pri ASYNC
+	VALID_FOR=(ALL_LOGFILES,PRIMARY_ROLE)
+	DB_UNIQUE_NAME=pri' SCOPE=SPFILE;
+
+
+	-- Some others configuration
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_1=ENABLE;
+	ALTER SYSTEM SET LOG_ARCHIVE_DEST_STATE_2=ENABLE;
+	ALTER SYSTEM SET LOG_ARCHIVE_MAX_PROCESSES=30;
+	ALTER SYSTEM SET LOG_ARCHIVE_CONFIG='DG_CONFIG=(sta,pri)';
+	ALTER SYSTEM SET FAL_CLIENT='sta';
+	ALTER SYSTEM SET FAL_SERVER='pri';
+	-- ALTER SYSTEM SET STANDBY_FILE_MANAGEMENT=AUTO;
+	ALTER DATABASE SET STANDBY DATABASE TO MAXIMIZE PERFORMANCE;
+	-- Check
+	SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE,PROTECTION_MODE FROM V$DATABASE;
+	
+	
+	-- Pre-Check
+	SELECT NAME, DB_UNIQUE_NAME, OPEN_MODE, LOG_MODE, FLASHBACK_ON, FORCE_LOGGING FROM V$DATABASE;
+	> SHBFIN	sta	MOUNTED	ARCHIVELOG	NO	YES
+	-- FLASHBACK
+	ALTER DATABASE FLASHBACK ON;
+	CREATE PFILE FROM SPFILE;
+	
+	-- if Standby not open
+	-- ALTER DATABASE OPEN;
+	ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION;
+	-- ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL; (Cancel)
+	-- So, the Archive Location will change from u02 -> FRA
+	
+	
+	ALTER SESSION SET nls_date_format='DD-MON-YYYY HH24:MI:SS';
+	
+	SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+	> ---
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 7 11-APR-24 11-APR-24 YES
+			 8 11-APR-24 11-APR-24 YES
+			 9 11-APR-24 11-APR-24 YES
+	> ---
+	-- New Archive Log is 9
+	
+	SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE;
+	> sta	NOT ALLOWED	PHYSICAL STANDBY	READ ONLY WITH APPLY
+	> pri	TO STANDBY	PRIMARY	READ WRITE (On Primary)
+
+
+
+
+
+
+----
+
+
++++++++++++++++++++++++  LISTENER, LOCAL NAMING CONFIGURATION  +++++++++++++++++++++
+
+# On the db1 host
+[oracle@db1 ~]$ cat $ORACLE_HOME/network/admin/listener.ora
+TAINGHE =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = db1)(PORT = 1521))
+      (ADDRESS = (PROTOCOL = IPC)(KEY = EXTPROC1521))
+    )
+  )
+
+SID_LIST_TAINGHE =
+  (SID_LIST =
+    (SID_DESC = (GLOBAL_DBNAME = shbfin) (ORACLE_HOME = /u01/app/oracle/product/19.0.0/dbhome_1) (SID_NAME = shbfin))
+  )
+
+[oracle@db1 ~]$ cat $ORACLE_HOME/network/admin/tnsnames.ora
+pri =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db1)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SID = shbfin)))
+
+sta =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db2)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SID = shbfin)))
+
+
+# On the db2 host
+[oracle@db2 ~]$ cat $ORACLE_HOME/network/admin/listener.ora
+TAINGHE =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = TCP)(HOST = db2)(PORT = 1521))
+      (ADDRESS = (PROTOCOL = IPC)(KEY = EXTPROC1521))
+    )
+  )
+
+SID_LIST_TAINGHE =
+  (SID_LIST =
+    (SID_DESC = (GLOBAL_DBNAME = shbfin) (ORACLE_HOME = /u01/app/oracle/product/19.0.0/dbhome_1) (SID_NAME = shbfin))
+  )
+[oracle@db2 ~]$ cat $ORACLE_HOME/network/admin/tnsnames.ora
+pri =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db1)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SID = shbfin)))
+
+sta =
+  (DESCRIPTION = (ADDRESS = (PROTOCOL = TCP)(HOST = db2)(PORT = 1521))
+    (CONNECT_DATA = (SERVER = DEDICATED)  (SID = shbfin)))
+	
+	
+----
+
++++++++++++++++++++++++++++++++++++++  TESTING  +++++++++++++++++++++++++++++++++++++
+
+
+								1. TEST INSERT DATA
+								-------------------
+								
+									-- PRIMARY --
+
+									
+	CREATE TABLE TEST1 (C1 INT PRIMARY KEY, C2 CHAR(6));
+	INSERT INTO TEST1 VALUES (52, 'rap');
+	INSERT INTO TEST1 VALUES (56, 'cap');
+	COMMIT;
+
+	SQL> select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+		GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+	---------- ---------- ---------------- ---------------
+			 1         10 INACTIVE                     200
+			 2         11 INACTIVE                     200
+			 3         12 CURRENT                      200
+
+	SQL> archive log list;
+	Database log mode              Archive Mode
+	Automatic archival             Enabled
+	Archive destination            /u02/oradata/shbfin/arch1/
+	Oldest online log sequence     10
+	Next log sequence to archive   12
+	Current log sequence           12
+
+
+									-- STANDBY --
+
+	SQL> select group#, sequence#, status, bytes/1024/1024 from v$standby_log;
+
+		GROUP#  SEQUENCE# STATUS     BYTES/1024/1024
+	---------- ---------- ---------- ---------------
+			 4         10 ACTIVE                 200
+			 5         11 ACTIVE                 200
+			 6         12 ACTIVE                 200
+			 7          0 UNASSIGNED             200
+			 
+	SQL> SELECT * FROM TEST1;
+
+			C1 C2
+	---------- ------
+			52 rap
+			56 cap
+
+
+	ALTER SYSTEM CHECKPOINT; -- Giải phóng Data Buffer, Online Redo Logs, ...
+	ALTER SYSTEM SWITCH LOGFILE;
+
+
+									-- PRIMARY --
+
+
+	SQL> select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+		GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+	---------- ---------- ---------------- ---------------
+			 1         13 CURRENT                      200
+			 2         11 INACTIVE                     200
+			 3         12 ACTIVE                       200
+			 
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 5 11-APR-24 11-APR-24 NO
+			 6 11-APR-24 11-APR-24 NO
+			 7 11-APR-24 11-APR-24 NO
+			 8 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 NO
+			10 11-APR-24 11-APR-24 NO
+			10 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 NO
+			12 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			12 11-APR-24 11-APR-24 NO
+
+
+									-- STANDBY -- 
+
+	SQL> select group#, sequence#, status, bytes/1024/1024 from v$standby_log;
+
+		GROUP#  SEQUENCE# STATUS     BYTES/1024/1024
+	---------- ---------- ---------- ---------------
+			 4         10 ACTIVE                 200
+			 5         11 ACTIVE                 200
+			 6         12 ACTIVE                 200
+			 7         13 ACTIVE                 200
+	
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 7 11-APR-24 11-APR-24 YES
+			 8 11-APR-24 11-APR-24 YES
+			 9 11-APR-24 11-APR-24 YES
+		 
+
+	ALTER SYSTEM ARCHIVE LOG CURRENT;
+
+									-- PRIMARY --
+
+
+	SQL> select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+		GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+	---------- ---------- ---------------- ---------------
+			 1         13 ACTIVE                       200
+			 2         14 CURRENT                      200
+			 3         12 INACTIVE                     200
+
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 5 11-APR-24 11-APR-24 NO
+			 6 11-APR-24 11-APR-24 NO
+			 7 11-APR-24 11-APR-24 NO
+			 8 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 NO
+			10 11-APR-24 11-APR-24 NO
+			10 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 NO
+			12 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			12 11-APR-24 11-APR-24 NO
+			13 11-APR-24 11-APR-24 NO
+			13 11-APR-24 11-APR-24 NO
+
+	14 rows selected.			 
+			 
+									-- STANDBY --
+	
+	SQL> select group#, sequence#, status, bytes/1024/1024 from v$standby_log;
+
+		GROUP#  SEQUENCE# STATUS     BYTES/1024/1024
+	---------- ---------- ---------- ---------------
+			 4         10 ACTIVE                 200
+			 5         11 ACTIVE                 200
+			 6         12 ACTIVE                 200
+			 7         13 ACTIVE                 200
+			 
+
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 7 11-APR-24 11-APR-24 YES
+			 8 11-APR-24 11-APR-24 YES
+			 9 11-APR-24 11-APR-24 YES
+
+
+
+									2. TURN OFF MRP
+									---------------
+
+
+	
+										-- PRIMARY --
+
+	SQL> select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+		GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+	---------- ---------- ---------------- ---------------
+			 1         16 INACTIVE                     200
+			 2         17 CURRENT                      200
+			 3         15 INACTIVE                     200
+
+
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 5 11-APR-24 11-APR-24 NO
+			 6 11-APR-24 11-APR-24 NO
+			 7 11-APR-24 11-APR-24 NO
+			 8 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 NO
+			10 11-APR-24 11-APR-24 YES
+			11 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 YES
+			12 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			12 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 NO
+			13 11-APR-24 11-APR-24 YES
+			14 11-APR-24 11-APR-24 NO
+			14 11-APR-24 11-APR-24 YES
+			15 11-APR-24 11-APR-24 YES
+			15 11-APR-24 11-APR-24 NO
+			16 11-APR-24 11-APR-24 NO
+			16 11-APR-24 11-APR-24 NO
+
+	INSERT INTO TEST1 VALUES (61, 'help');
+	INSERT INTO TEST1 VALUES (66, 'trapped');
+	COMMIT;
+	ALTER SYSTEM CHECKPOINT;
+	ALTER SYSTEM SWITCH LOGFILE;
+	ALTER SYSTEM ARCHIVE LOG CURRENT;
+	
+	
+	SQL>  select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+		GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+	---------- ---------- ---------------- ---------------
+			 1         19 CURRENT                      200
+			 2         17 INACTIVE                     200
+			 3         18 INACTIVE                     200
+			 
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 5 11-APR-24 11-APR-24 NO
+			 6 11-APR-24 11-APR-24 NO
+			 7 11-APR-24 11-APR-24 NO
+			 8 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 YES
+			12 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			12 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 NO
+			14 11-APR-24 11-APR-24 YES
+			14 11-APR-24 11-APR-24 NO
+			15 11-APR-24 11-APR-24 NO
+			15 11-APR-24 11-APR-24 YES
+			16 11-APR-24 11-APR-24 NO
+			16 11-APR-24 11-APR-24 NO
+			17 11-APR-24 11-APR-24 NO
+			17 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			18 11-APR-24 11-APR-24 NO
+			18 11-APR-24 11-APR-24 NO
+
+	SQL> select * from test1;
+
+			C1 C2
+	---------- ------
+			52 rap
+			56 cap
+			53 trap
+			54 vamp
+			61 help
+			66 trapi
+
+	6 rows selected.
+
+										-- STANDBY --
+
+	SQL> select * from test1;
+
+			C1 C2
+	---------- ------
+			52 rap
+			56 cap
+			53 trap
+			54 vamp
+
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 7 11-APR-24 11-APR-24 YES
+			 8 11-APR-24 11-APR-24 YES
+			 9 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 YES
+			11 11-APR-24 11-APR-24 YES
+			12 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 YES
+			14 11-APR-24 11-APR-24 YES
+			15 11-APR-24 11-APR-24 YES
+			16 11-APR-24 11-APR-24 NO
+			17 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			18 11-APR-24 11-APR-24 NO
+
+	-- -> LOG 16,17 (ARCHIVE after SWITCH), 18 (ARCHIVE after ARCHIVE LOG CURRENT) did not be applied by MRP, but be shipped.
+
+								-- AFTER TURN MRP ON --
+								
+								
+									-- PRIMARY --
+									
+	ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION;
+	-- WAIT FOR LONG TIME FOR FULLY APPLYING.... (2-3 minutes)
+		SQL> select * from test1;
+
+			C1 C2
+	---------- ------
+			52 rap
+			56 cap
+			53 trap
+			54 vamp
+			61 help
+			66 trapi
+
+	6 rows selected.
+	
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 5 11-APR-24 11-APR-24 NO
+			 6 11-APR-24 11-APR-24 NO
+			 7 11-APR-24 11-APR-24 NO
+			 8 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 NO
+			 9 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 NO
+			11 11-APR-24 11-APR-24 YES
+			12 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			12 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 NO
+			14 11-APR-24 11-APR-24 YES
+			14 11-APR-24 11-APR-24 NO
+			15 11-APR-24 11-APR-24 NO
+			15 11-APR-24 11-APR-24 YES
+			16 11-APR-24 11-APR-24 NO
+			16 11-APR-24 11-APR-24 YES
+			17 11-APR-24 11-APR-24 YES
+			17 11-APR-24 11-APR-24 NO
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			18 11-APR-24 11-APR-24 NO
+			18 11-APR-24 11-APR-24 YES  (HERE, THE LAST APPLIED LOG IN STANDBY)
+
+	
+									-- IN STANDBY --
+									
+	SELECT  PROCESS, STATUS, SEQUENCE# FROM V$MANAGED_STANDBY;
+	> ---
+	...
+	ARCH	CONNECTED	0
+	RFS		IDLE		0
+	RFS		IDLE		19
+	RFS		IDLE		0
+	MRP0	APPLYING_LOG	190
+	> ---
+	
+
+
+	
+										3. AFTER DISCONNECT
+										-------------------
+
+											-- PRIMARY --
+											
+	INSERT INTO TEST1 VALUES (12, 'lol');
+	INSERT INTO TEST1 VALUES (14, 'vu');
+	COMMIT;
+	ALTER SYSTEM CHECKPOINT;
+	ALTER SYSTEM SWITCH LOGFILE;
+	ALTER SYSTEM ARCHIVE LOG CURRENT;
+	
+	
+	SELECT dest_name, type, status, archived_seq#, error, gap_status FROM  GV$ARCHIVE_DEST_STATUS;
+	> ---
+	LOG_ARCHIVE_DEST_1	LOCAL	VALID	20		
+	LOG_ARCHIVE_DEST_2	PHYSICAL	ERROR	18	ORA-12609: TNS: Receive timeout occurred	RESOLVABLE GAP
+	...
+	> ---
+	
+	SQL> select group#,sequence#,status, bytes/1024/1024 from v$log;
+
+		GROUP#  SEQUENCE# STATUS           BYTES/1024/1024
+	---------- ---------- ---------------- ---------------
+			 1         19 INACTIVE                     200   <-- THIS ARCHIVED!!
+			 2         20 CURRENT                      200
+			 3         18 INACTIVE                     200
+			 
+	SQL> select * from test1;
+
+			C1 C2
+	---------- ------
+			52 rap
+			56 cap
+			53 trap
+			54 vamp
+			61 help
+			66 trapi
+			14 vu
+
+	7 rows selected.
+	
+	
+	
+										-- STANDBY --
+										
+# BUT STANDBY HAS NO APPLIED :(
+# ERROR: SELECT * FROM  GV$ARCHIVE_DEST_STATUS;
+SELECT * FROM  GV$ARCHIVE_DEST_STATUS;
+SOLVED: RESTART 2 Databases, then Restart MRP processes/// NO -> Waiting ^^
+	
+	
+	SQL> select * from test1;
+
+			C1 C2
+	---------- ------
+			52 rap
+			56 cap
+			53 trap
+			54 vamp
+			61 help
+			66 trapi
+
+	6 rows selected.
+	
+	
+	Select
+	   PROCESS, 
+	   SEQUENCE#,
+	   STATUS
+	From
+	   V$MANAGED_STANDBY
+	WHERE PROCESS='RFS' OR PROCESS='MRP0';
+
+	RFS	0	IDLE
+	RFS	19	IDLE
+	RFS	0	IDLE
+	MRP0	19	APPLYING_LOG
+	
+								-- AFTER RE-CONNECT --
+								
+	
+	*** WAITING...... (may be upto 5 minutes :) )
+	
+	SELECT dest_name, type, status, archived_seq#, error, gap_status FROM  GV$ARCHIVE_DEST_STATUS; (PRIMARY)
+	> ---
+	LOG_ARCHIVE_DEST_1	LOCAL	VALID	20		
+	LOG_ARCHIVE_DEST_2	PHYSICAL	VALID	20		NO GAP  <--- YAS!
+	> ---
+	
+	*** WAITING FOR MRP APPLYING 
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 7 11-APR-24 11-APR-24 YES
+			 8 11-APR-24 11-APR-24 YES
+			 9 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 YES
+			11 11-APR-24 11-APR-24 YES
+			12 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 YES
+			14 11-APR-24 11-APR-24 YES
+			15 11-APR-24 11-APR-24 YES
+			16 11-APR-24 11-APR-24 YES
+			17 11-APR-24 11-APR-24 YES
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			18 11-APR-24 11-APR-24 YES
+			19 11-APR-24 12-APR-24 NO  <-- MRP
+			20 12-APR-24 12-APR-24 NO  <-- MRP
+			
+	*** CHECK THEY WORK (RFS & MRP)
+	Select
+	   PROCESS, 
+	   SEQUENCE#,
+	   STATUS
+	From
+	   V$MANAGED_STANDBY
+	WHERE PROCESS='RFS' OR PROCESS='MRP0';
+	> ---
+		PROCESS    SEQUENCE# STATUS
+	--------- ---------- ------------
+	RFS                0 IDLE
+	RFS                0 IDLE
+	RFS                0 IDLE
+	MRP0              21 APPLYING_LOG
+	RFS                0 IDLE
+	RFS               21 IDLE
+	RFS                0 IDLE
+	> ---
+
+	*** OKAY, THEY HAVE DONE!
+	
+	SQL> SELECT SEQUENCE#, FIRST_TIME, NEXT_TIME, APPLIED FROM V$ARCHIVED_LOG ORDER BY SEQUENCE#;
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			 7 11-APR-24 11-APR-24 YES
+			 8 11-APR-24 11-APR-24 YES
+			 9 11-APR-24 11-APR-24 YES
+			10 11-APR-24 11-APR-24 YES
+			11 11-APR-24 11-APR-24 YES
+			12 11-APR-24 11-APR-24 YES
+			13 11-APR-24 11-APR-24 YES
+			14 11-APR-24 11-APR-24 YES
+			15 11-APR-24 11-APR-24 YES
+			16 11-APR-24 11-APR-24 YES
+			17 11-APR-24 11-APR-24 YES
+
+	 SEQUENCE# FIRST_TIM NEXT_TIME APPLIED
+	---------- --------- --------- ---------
+			18 11-APR-24 11-APR-24 YES
+			19 11-APR-24 12-APR-24 YES
+			20 12-APR-24 12-APR-24 YES
+
+	14 rows selected.
+
+
+
+
+
+
+	
++++++++++++++++++++++++++++++++++++++  ERROR & FIXING  ++++++++++++++++++++++++++++
+
+	ORA-16086: Redo data cannot be written to the standby redo log -> wrong config for log_archive_dest_1 role ^_^ -> Config again: local_dest_1 -> db_unique_name = 'sta'
+	ORA-12514: TNS:listener does not currently know of service requested in connect descriptor/TNS: no listener
+	ORA-01034: ORACLE not available
+
+
+
+
+
+
++++++++++++++++++++++++++++++++++++++    MONITOR   +++++++++++++++++++++++++++++++++++
+https://www.dba-oracle.com/t_oracledataguard_146_monitor_recovery_standby_databases.htm
+
+network
+select
+   severity,
+   error_code,
+   to_char(timestamp,'DD-MON-YYYY HH24:MI:SS') "timestamp",
+   message
+from
+   v$dataguard_status
+where
+   dest_id=2;
+
+
+--	NOTE
+SELECT ARCH.THREAD# "Thread", ARCH.SEQUENCE# "Last Sequence Received",
+APPL.SEQUENCE# "Last Sequence Applied",
+(ARCH.SEQUENCE# - APPL.SEQUENCE#) "Difference" 
+FROM
+(SELECT THREAD# ,SEQUENCE# FROM V$ARCHIVED_LOG WHERE (THREAD#,FIRST_TIME )
+IN (SELECT THREAD#,MAX(FIRST_TIME) 
+FROM V$ARCHIVED_LOG GROUP BY THREAD#)) ARCH,
+(SELECT THREAD# ,SEQUENCE# FROM V$LOG_HISTORY WHERE (THREAD#,FIRST_TIME )
+IN (SELECT THREAD#,MAX(FIRST_TIME) 
+FROM V$LOG_HISTORY GROUP BY THREAD#)) APPL
+WHERE
+ARCH.THREAD# = APPL.THREAD#
+ORDER BY 1;
+
+
+
+-- http://www.orafaq.com/forum/t/91618
+-- RFS (remote file server) the Remote File Server (RFS) process receives the redo
+data and writes it to a Standby Redo Log (SRL)
+-- Notice the block# for the RFS and MRP0 increasing If it keeps increasing 
+it means your RFS working other wise not only when transactions are running on primary.
+SQL> SELECT  PROCESS, STATUS,SEQUENCE#,BLOCK#,BLOCKS, DELAY_MINS FROM V$MANAGED_STANDBY;
+
+-- ALTER SYSTEM ... SCOPE = {MEMORY: chỉ thay đổi tạm thời và sử dụng ngay | SPFILE: thay đổi file nhưng cần restart | BOTH: thay đổi file và sử dụng ngay}
+
+https://docs.oracle.com/en/database/oracle/oracle-database/19/haovw/monitor-oracle-data-guard-configuration.html#GUID-41809D11-DDB1-4018-B300-221334CCC911
