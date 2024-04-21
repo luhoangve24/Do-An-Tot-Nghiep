@@ -5,9 +5,13 @@
 # $ORACLE_BASE=/u01/app/oracle
 # $ORACLE_HOME=$ORACLE_BASE/product/19.0.0/dbhome_1
 
-1. Prepare the primary database.
-2. Set parameters on the physical standby database.
-3. Configure Oracle Net Services.
+1. Configure Oracle Net Services & Name Concept.
+2. Prepare the primary database.
+	FORCE LOGGING
+	ARCHIVELOG
+	FLASHBACK ON
+	STANDBY LOG
+3. Set parameters on the physical standby database.
 4. Start the standby database instance.
 5. Execute the DUPLICATE TARGET DATABASE FOR
 STANDBY FROM ACTIVE DATABASE RMAN command.
