@@ -122,3 +122,39 @@ Observer 'luhoangve24' started
 [W000 2024-04-16T15:20:45.620+07:00] The standby pri is ready to be a FSFO target
 [W000 2024-04-16T15:20:46.629+07:00] Connection to the primary restored!
 [W000 2024-04-16T15:20:49.773+07:00] Disconnecting from database sta.
+Observer 'luhoangve24' started
+[W000 2024-04-21T23:27:06.836+07:00] Observer trace level is set to USER
+[W000 2024-04-21T23:27:06.838+07:00] Try to connect to the primary.
+[W000 2024-04-21T23:27:06.839+07:00] Try to connect to the primary sta.
+[W000 2024-04-21T23:27:06.917+07:00] The standby pri is ready to be a FSFO target
+[W000 2024-04-21T23:27:07.935+07:00] Connection to the primary restored!
+[W000 2024-04-21T23:27:11.042+07:00] Disconnecting from database sta.
+2024-04-21T23:30:16.918+07:00
+Observer 'luhoangve24' stopped
+Observer 'luhoangve24' started
+[W000 2024-04-22T00:53:16.489+07:00] Observer trace level is set to USER
+[W000 2024-04-22T00:53:16.490+07:00] Try to connect to the primary.
+[W000 2024-04-22T00:53:16.491+07:00] Try to connect to the primary sta.
+[W000 2024-04-22T00:53:16.574+07:00] The standby pri is ready to be a FSFO target
+[W000 2024-04-22T00:53:17.587+07:00] Connection to the primary restored!
+[W000 2024-04-22T00:53:20.702+07:00] Disconnecting from database sta.
+2024-04-22T01:02:22.988+07:00
+Observer 'luhoangve24' stopped
+Observer 'luhoangve24' started
+[W000 2024-04-22T01:02:55.131+07:00] Observer trace level is set to USER
+[W000 2024-04-22T01:02:55.133+07:00] Try to connect to the primary.
+[W000 2024-04-22T01:02:55.134+07:00] Try to connect to the primary sta.
+[W000 2024-04-22T01:02:55.210+07:00] The standby pri is ready to be a FSFO target
+[W000 2024-04-22T01:02:56.222+07:00] Connection to the primary restored!
+[W000 2024-04-22T01:02:59.333+07:00] Disconnecting from database sta.
+2024-04-22T01:43:21.581+07:00
+Observer 'luhoangve24' stopped
+Observer 'luhoangve24' started
+[W000 2024-04-23T12:30:59.657+07:00] Observer trace level is set to USER
+[W000 2024-04-23T12:30:59.658+07:00] Try to connect to the primary.
+[W000 2024-04-23T12:30:59.659+07:00] Try to connect to the primary sta.
+[W000 2024-04-23T12:30:59.736+07:00] The standby pri is ready to be a FSFO target
+[W000 2024-04-23T12:31:00.755+07:00] Connection to the primary restored!
+[W000 2024-04-23T12:31:03.955+07:00] Disconnecting from database sta.
+2024-04-23T12:37:45.848+07:00
+Observer 'luhoangve24' stopped

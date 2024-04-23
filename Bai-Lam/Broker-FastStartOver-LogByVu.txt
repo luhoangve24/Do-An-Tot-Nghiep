@@ -241,7 +241,8 @@ show fast_start failover;
 start observer file is /home/oracle/fsfo.dat logfile is /home/oracle/logob.log; -- this is foreground process 
 start observer file is D:\Workspace\2023-2024-Ki-I\Do-An-Tot-Nghiep\Bai-Lam\observer\obs.dat logfile is D:\Workspace\2023-2024-Ki-I\Do-An-Tot-Nghiep\Bai-Lam\observer\log_obs.log;
 nohup dgmgrl sys/123@pri "start observer file='$ORACLE_HOME/dbs/fsfo.dat'" -logfile $HOME/logob.dat & -- give it to background
-
+ps -ef | grep -i observer
+jobs
 ++++++++ TESTCASE
 -- Some important processes for normally operating instance: DBWr, LGWr, PMON, SMON, ... -> kill it -> instance down
 -- Kill PMON process in Primary for testing

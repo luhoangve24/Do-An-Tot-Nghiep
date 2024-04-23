@@ -1,0 +1,141 @@
+-- Scenario: No LWP
+
+
+-- Primary
+show parameter lost;
+select database_role from v$database;
+    -- Create tablespace for test Lost Writes
+create tablespace lostwrite datafile '/u02/oradata/shbfin/test.dbf' size 100M;
+    -- Verify & Lost Write Protection
+select * from dba_data_files;
+select tablespace_name,status,bigfile,contents,logging,allocation_type,encrypted,lost_write_protect,chunk_tablespace from dba_tablespaces;
+
+    create table losttable 
+    (id number, 
+    payload varchar2(100)) 
+    tablespace lostwrite;
+    
+    select current_scn from v$database; -- 3127919
+    
+		-- Import Data
+    insert into losttable(id,payload) values (1, '2 trieu VND');
+    COMMIT;
+    ALTER SYSTEM CHECKPOINT; -- 3129448
+    ALTER SYSTEM flush buffer_cache;
+    
+		-- Find where data resides
+    select rowid, dbms_rowid.ROWID_BLOCK_NUMBER(rowid), a.* from losttable a;
+    select block_id, blocks from dba_extents where segment_name='LOSTTABLE';
+	
+	# In the system, do it
+	
+	[oracle@db1 shbfin]$ dd if=/u02/oradata/shbfin/test.dbf of=cpy_test skip=135 count=1 bs=8192
+	1+0 records in
+	1+0 records out
+	8192 bytes (8.2 kB) copied, 0.000134396 s, 61.0 MB/s
+	[oracle@db1 shbfin]$ grep '2 trieu VND' cpy_test.dbf
+	Binary file cpy_test.dbf matches
+	
+
+        -- Update table
+    update losttable
+    set payload = '5 trieu VND'
+    where id = 1;
+    commit;
+    select current_scn from v$database; -- 3131165
+    alter system checkpoint;
+    alter system flush buffer_cache;
+	
+	# Check again in datafile
+	
+	[oracle@db1 shbfin]$ dd if=/u02/oradata/shbfin/test.dbf of=cpy_testv2 skip=135 count=1 bs=8192
+	1+0 records in
+	1+0 records out
+	8192 bytes (8.2 kB) copied, 0.000197594 s, 41.5 MB/s
+	[oracle@db1 shbfin]$ grep '5 trieu VND' cpy_testv2.dbf
+	Binary file cpy_testv2.dbf matches
+	
+	# Simulating the Lost-Writes
+	[oracle@db1 shbfin]$ dd if=cpy_test of=/u02/oradata/shbfin/test.dbf seek=135 count=1 bs=8192 conv=notrunc
+	1+0 records in
+	1+0 records out
+	8192 bytes (8.2 kB) copied, 0.000203 s, 40.4 MB/s
+
+	# check
+	[oracle@db1 shbfin]$ grep '2 trieu VND' test.dbf
+	Binary file test.dbf matches
+
+			-- Query in Primary
+	alter system flush buffer_cache -- delete in DBC for new query
+	select * from losttable;
+	
+			-- Update new
+    UPDATE losttable
+    SET payload = '9 trieu VND'
+    WHERE id = 1;
+	-> 1 row updated -> no  error
+-- Standby
+show parameter lost;
+select database_role from v$database;
+    -- Check for auto sync creating
+    select * from dba_data_files;
+    select * from lost_table;
+	
+	# Check again in Standby
+	
+	[oracle@db2 shbfin]$ dd if=/u02/oradata/shbfin/test.dbf of=cpy_test.dbf skip=135 count=1 bs=8192
+	1+0 records in
+	1+0 records out
+	8192 bytes (8.2 kB) copied, 0.0001521 s, 53.9 MB/s
+	[oracle@db2 shbfin]$ grep '2 trieu VND' cpy_test.dbf
+	Binary file cpy_test.dbf matches
+
+	# Check again v2 in Standby
+	
+	[oracle@db2 shbfin]$ ls
+	arch1                cpy_test.dbf    stb_redo05.log  system01.dbf   users01.dbf
+	control01.ctl        cpy_testv2.dbf  stb_redo06.log  temp01.dbf
+	control02.ctl        fra             stb_redo07.log  test.dbf
+	control_standby.ctl  stb_redo04.log  sysaux01.dbf    undotbs01.dbf
+	[oracle@db2 shbfin]$ grep '5 trieu VND' cpy_testv2.dbf
+	Binary file cpy_testv2.dbf matches
+
+
+	# After Simulating LW, alert:
+	<msg time='2024-04-23T10:26:56.186+07:00' org_id='oracle' comp_id='rdbms'
+	 type='UNKNOWN' level='16' host_id='db2'
+	 host_addr='192.168.137.102' pid='2468'>
+	 <txt>Errors in file /u01/app/oracle/diag/rdbms/sta/shbfin/trace/shbfin_mrp0_2468.trc:
+	ORA-00600: internal error code, arguments: [3020], [5], [135], [20971655], [], [], [], [], [], [], [], []
+	ORA-10567: Redo is inconsistent with data block (file# 5, block# 135, file offset is 1105920 bytes)
+	ORA-10564: tablespace LOSTWRITE
+	ORA-01110: data file 5: &apos;/u02/oradata/shbfin/test.dbf&apos;
+	ORA-10561: block type &apos;TRANSACTION MANAGED DATA BLOCK&apos;, data object# 73446
+	 </txt>
+	</msg>
+	<msg time='2024-04-23T10:26:56.186+07:00' org_id='oracle' comp_id='rdbms'
+	 type='UNKNOWN' level='16' host_id='db2'
+	 host_addr='192.168.137.102' pid='2468'>
+	 <txt>Background Media Recovery process shutdown (shbfin)
+	 </txt>
+	</msg>
+
+
+
+-- Scenario: With Lost Write
+-- RECREATE & Remove
+-- DROP TABLESPACE lostwrite INCLUDING CONTENTS AND DATAFILES;
+... Continue
+# Both Primary and Standby
+SQL> alter system set db_lost_write_protect=typical;
+
+-- After Simulating Lost Writes
+    UPDATE losttable
+    SET payload = '9 trieu VND'
+    WHERE id = 1;
+	
+-- Error: Apply Log not running after using snapshot
+DGMGRL> edit database STANDBY set state='apply-off';
+Succeeded.
+DGMGRL> edit database STANDBY set state='apply-on';
+Succeeded.
