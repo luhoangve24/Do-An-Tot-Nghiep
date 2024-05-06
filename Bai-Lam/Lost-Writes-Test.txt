@@ -139,3 +139,22 @@ DGMGRL> edit database STANDBY set state='apply-off';
 Succeeded.
 DGMGRL> edit database STANDBY set state='apply-on';
 Succeeded.
+
+# LOSTWRITE DETECTION
+<msg time='2024-05-01T12:59:19.539+07:00' org_id='oracle' comp_id='rdbms'
+ type='UNKNOWN' level='16' host_id='db2'
+ host_addr='192.168.137.102' pid='5393'>
+ <txt>Errors in file /u01/app/oracle/diag/rdbms/sta/shbfin/trace/shbfin_mrp0_539                    3.trc:
+ORA-00752: recovery detected a lost write of a data block
+ORA-10567: Redo is inconsistent with data block (file# 5, block# 132, file offse                    t is 1081344 bytes)
+ORA-10564: tablespace LOSTWRITE
+ORA-01110: data file 5: &apos;/u02/oradata/shbfin/test.dbf&apos;
+ORA-10561: block type &apos;TRANSACTION MANAGED DATA BLOCK&apos;, data object# 7                    3220
+ </txt>
+</msg>
+<msg time='2024-05-01T12:59:19.539+07:00' org_id='oracle' comp_id='rdbms'
+ type='UNKNOWN' level='16' host_id='db2'
+ host_addr='192.168.137.102' pid='5393'>
+ <txt>Background Media Recovery process shutdown (shbfin)
+ </txt>
+</msg>

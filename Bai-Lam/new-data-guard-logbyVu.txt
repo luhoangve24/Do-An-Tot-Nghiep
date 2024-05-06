@@ -71,6 +71,7 @@ STANDBY FROM ACTIVE DATABASE RMAN command.
 	
 	-- Pre-Check for Mode
 	SELECT NAME, DB_UNIQUE_NAME, OPEN_MODE, LOG_MODE, FLASHBACK_ON, FORCE_LOGGING FROM V$DATABASE;
+	
 	> SHBFIN	pri	MOUNTED	NOARCHIVELOG	NO	NO
 	SELECT DB_UNIQUE_NAME, SWITCHOVER_STATUS, DATABASE_ROLE, OPEN_MODE FROM V$DATABASE;
 	> pri	NOT ALLOWED	PRIMARY	MOUNTED
@@ -301,11 +302,20 @@ STANDBY FROM ACTIVE DATABASE RMAN command.
 
 ++++++++++++++++++++++  3. RMAN DUPLICATE FOR STANDBY (IN PRIMARY)  ++++++++++++++++++
 	
+
 	-- CLOUD
 	iptables -P INPUT ACCEPT
 	iptables -P OUTPUT ACCEPT
 	iptables -P FORWARD ACCEPT
 	iptables -F
+	
+	-- Start Nomount for backup with PFILE from Primary
+	. oraenv
+	shbfin
+	sqlplus / as sysdba
+	STARTUP NOMOUNT PFILE='$ORACLE_HOME/dbs/initshbfin.ora';
+	SHOW PARAMETER NAME;
+	
 	rman TARGET sys/123@pri AUXILIARY sys/123@sta
 	DUPLICATE TARGET DATABASE
 	  FOR STANDBY
@@ -313,7 +323,7 @@ STANDBY FROM ACTIVE DATABASE RMAN command.
 	  DORECOVER
 	  SPFILE
 		SET db_unique_name = 'sta' COMMENT 'IS STANDBY'
-		SET local_listener = '(ADDRESS=(PROTOCOl=TCP)(HOST=target)(PORT=1521))' COMMENT 'IS STANDBY'
+		SET local_listener = '(ADDRESS=(PROTOCOl=TCP)(HOST=db2)(PORT=1521))' COMMENT 'IS STANDBY'
 		SET log_archive_dest_1 = 'LOCATION=/u02/oradata/shbfin/arch1/
                                  VALID_FOR=(ALL_LOGFILES,ALL_ROLES)
                                   DB_UNIQUE_NAME=sta' COMMENT 'IS STANBY'
@@ -329,12 +339,7 @@ STANDBY FROM ACTIVE DATABASE RMAN command.
 	> ---
 
 	
-	-- Start Nomount for backup with PFILE from Primary
-	. oraenv
-	shbfin
-	sqlplus / as sysdba
-	STARTUP NOMOUNT PFILE='$ORACLE_HOME/dbs/initshbfin.ora';
-	SHOW PARAMETER NAME;
+
 	
 	-- RMAN Duplicate, Active Restore
 	rman TARGET sys/123@pri AUXILIARY sys/123@sta
@@ -457,7 +462,7 @@ STANDBY FROM ACTIVE DATABASE RMAN command.
 	
 	-- if Standby not open
 	-- ALTER DATABASE OPEN;
-		FROM SESSION;
+	-- ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT;
 	-- ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL; (Cancel)
 	-- So, the Archive Location will change from u02 -> FRA
 	

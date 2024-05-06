@@ -1,41 +1,5 @@
-Sync. Replication:
-- HA for common failures
-- No data loss Disaster Recovery
-- Higher Replication Factor -> increase fault tolerance
-
-TNHH MTV 
-TMCP
-TMCP
-RLO
-RPO
-RTO
-RMAN
-OSB
-MTTR
-MAA
-ODG
-ADG
-LNS
-RFS
-MRP
-LSP
-CSDL
-ASM
-I/O
-FAL
-ACK
-DML
-LGWR
-DBWR
-ARL
-NSS
-NSA
-DGMGRL
-DMON
-PMON
-LGWR
-DGB - Data Guard Broker
-BMM - Broker Management Model
-RAC
-OCI
-OLTP
+ kiến thức cắt đi (khái niệm)
+ chương 2 kết quả -> đẩy sang chương 3
+ đoạn code copy ra, không chụp màn hình
+ các dấu câu chỉnh sửa lại cho hợp lý
+ tiêu đề ảnh...

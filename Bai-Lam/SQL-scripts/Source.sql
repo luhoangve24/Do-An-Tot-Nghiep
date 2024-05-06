@@ -1,0 +1,63 @@
+-- Status
+SELECT 
+    DB_UNIQUE_NAME, 
+    OPEN_MODE, 
+    LOG_MODE, 
+    FLASHBACK_ON, 
+    FORCE_LOGGING,
+    DATABASE_ROLE,
+    SWITCHOVER_STATUS
+FROM 
+    V$DATABASE;
+
+-- Processes
+SELECT
+    PROCESS, STATUS, SEQUENCE# 
+FROM 
+    V$MANAGED_STANDBY;
+-- ALLOCATED: active, but not connected to PDB
+-- CLOSING: completed to archived redo logs
+-- CONNECTED: network etablished to PDB
+-- IDLE: not performing any activities
+-- WRITING: writing redo logs
+--    SELECT NAME, PID, ROLE, ACTION, CLIENT_PID, CLIENT_ROLE, SEQUENCE#,  DEST_ID
+--          FROM V$DATAGUARD_PROCESS ORDER BY ACTION;    
+
+-- Information about Online Redo Logs
+SELECT 
+    GROUP#,SEQUENCE#,
+    BYTES/1024/1024 sjze, STATUS 
+FROM 
+    V$LOG;
+
+-- Information about all Logs type
+SELECT 
+    TYPE, MEMBER 
+FROM 
+    V$LOGFILE 
+ORDER BY GROUP#;
+
+-- Information about Archived Redo Logs
+ALTER SESSION SET nls_date_format='DD-MON-YYYY HH24:MI:SS';
+SELECT 
+    SEQUENCE#, FIRST_TIME, 
+    NEXT_TIME,APPLIED,STANDBY_DEST,
+    END_OF_REDO_TYPE,RESETLOGS_TIME 
+FROM V$ARCHIVED_LOG
+ORDER BY FIRST_TIME, NEXT_TIME,SEQUENCE#, STANDBY_DEST;
+
+-- Information about remote location
+SELECT 
+    DEST_ID, DEST_NAME, STATUS,
+    TYPE, DATABASE_MODE,
+    RECOVERY_MODE, PROTECTION_MODE,
+    DESTINATION, ARCHIVED_SEQ#,
+    APPLIED_SEQ#, ERROR, DB_UNIQUE_NAME, SYNCHRONIZATION_STATUS,
+    SYNCHRONIZED, GAP_STATUS
+FROM  
+    GV$ARCHIVE_DEST_STATUS 
+WHERE 
+    DEST_ID <= 2;
+    
+
+    
