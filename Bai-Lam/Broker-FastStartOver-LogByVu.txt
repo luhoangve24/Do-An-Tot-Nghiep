@@ -430,3 +430,12 @@ disable fast_start failover;
 show observer
 stop observer
 show configuration verbose;
+
+EDIT CONFIGURATION SET PROPERTY
+FastStartFailoverLagLimit = 30;
+
+Nói qua về SHBFinance -> vấn đề an toàn bảo mật thông
+Thu thập thông tin case study
+
+
+edit database pri set property 'LogXptMode'='sync';
